@@ -116,13 +116,32 @@ public class DeepSeekModelAdapter implements ChatModel {
         for (Memory.Message msg : messages) {
             Map<String, String> m = new HashMap<>();
             m.put("role", msg.role().name().toLowerCase());
-            m.put("content", msg.content());
+            // Handle both String and List<ContentItem> content
+            String textContent = extractTextContent(msg);
+            m.put("content", textContent);
             if (msg.name() != null) {
                 m.put("name", msg.name());
             }
             result.add(m);
         }
         return result;
+    }
+
+    private String extractTextContent(Memory.Message msg) {
+        if (msg.content() instanceof String s) {
+            return s;
+        } else if (msg.content() instanceof List<?> list) {
+            StringBuilder sb = new StringBuilder();
+            for (Object item : list) {
+                if (item instanceof Memory.ContentItem.Text t) {
+                    sb.append(t.text()).append(" ");
+                } else if (item instanceof Memory.ContentItem.Image) {
+                    sb.append("[图片] ");
+                }
+            }
+            return sb.toString().trim();
+        }
+        return "";
     }
 
     private Map<String, Integer> parseUsage(Map<String, Object> resp) {

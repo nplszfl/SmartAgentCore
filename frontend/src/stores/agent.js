@@ -28,8 +28,14 @@ export const useAgentStore = defineStore('agent', {
     async sendMessage(input, imageFile = null) {
       // 添加用户消息
       let displayContent = input
+      let imageBase64 = null
       if (imageFile) {
         displayContent = input + ' [📷 图片已上传]'
+        // Convert file to base64
+        imageBase64 = await this.fileToBase64(imageFile)
+        console.log('[DEBUG] 图片已转换 Base64，长度:', imageBase64 ? imageBase64.length : 0)
+      } else {
+        console.log('[DEBUG] 没有图片文件')
       }
       this.messages.push({
         role: 'user',
@@ -51,14 +57,17 @@ export const useAgentStore = defineStore('agent', {
       this.currentToolCalls = []
 
       try {
+        console.log('[DEBUG] 发送请求，imageBase64长度:', imageBase64 ? imageBase64.length : 0)
         const res = await executeAgent({
           input,
           agentName: this.config.agentName,
           systemPrompt: this.config.systemPrompt,
           maxIterations: this.config.maxIterations,
           tools: this.config.tools,
-          hasImage: !!imageFile
+          imageBase64,
+          imageName: imageFile ? imageFile.name : null
         })
+        console.log('[DEBUG] 收到响应:', res.data)
 
         // 更新助手消息
         assistantMsg.content = res.data.content || res.data.error || '处理完成'
@@ -74,8 +83,17 @@ export const useAgentStore = defineStore('agent', {
       }
     },
 
-    clearMessages() {
+    clearChat() {
       this.messages = []
+    },
+
+    fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(reader.result)
+        reader.onerror = reject
+        reader.readAsDataURL(file)
+      })
     }
   }
 })

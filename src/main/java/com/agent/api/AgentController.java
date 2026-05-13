@@ -60,10 +60,32 @@ public class AgentController {
                     messages.add(msg);
                 }
             }
-            messages.add(new Memory.Message(Memory.Message.Role.USER, input));
-            
-            // Execute ReAct loop
+
+            // Handle image input - directly send to MiniMax multimodal model
             String finalAnswer = null;
+            if (request.getImageBase64() != null && !request.getImageBase64().isEmpty()) {
+                // 构建多模态消息
+                List<Memory.ContentItem> contentItems = new ArrayList<>();
+                if (input != null && !input.isEmpty()) {
+                    contentItems.add(new Memory.ContentItem.Text(input));
+                }
+                String pureBase64 = request.getImageBase64();
+                if (pureBase64.contains(",")) {
+                    pureBase64 = pureBase64.split(",")[1];
+                }
+                String format = "jpeg";
+                if (request.getImageName() != null) {
+                    if (request.getImageName().toLowerCase().endsWith(".png")) format = "png";
+                    else if (request.getImageName().toLowerCase().endsWith(".webp")) format = "webp";
+                }
+                contentItems.add(new Memory.ContentItem.Image(pureBase64, format));
+
+                messages.add(new Memory.Message(Memory.Message.Role.USER, contentItems));
+            } else {
+                messages.add(new Memory.Message(Memory.Message.Role.USER, input));
+            }
+
+            // Execute ReAct loop
             for (int step = 0; step < maxIterations; step++) {
                 // Call model
                 ModelResponse response = chatModel.chat(messages);
@@ -106,7 +128,7 @@ public class AgentController {
                     }
                 }
             }
-            
+
             if (finalAnswer == null) {
                 finalAnswer = "达到最大迭代次数限制";
             }
@@ -222,5 +244,19 @@ public class AgentController {
         status.put("model", "MiniMax");
         status.put("tools", toolRegistry.getAll().size());
         return status;
+    }
+
+    /**
+     * 保存Base64图片到临时文件
+     */
+    private String saveBase64ToTempFile(String base64Data, String fileName) throws Exception {
+        // 去除data URI前缀
+        if (base64Data.contains(",")) {
+            base64Data = base64Data.split(",")[1];
+        }
+        byte[] imageBytes = java.util.Base64.getDecoder().decode(base64Data);
+        java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("ocr_", fileName != null ? fileName : ".png");
+        java.nio.file.Files.write(tempFile, imageBytes);
+        return tempFile.toAbsolutePath().toString();
     }
 }

@@ -44,4 +44,14 @@ public class AgentRequest {
      * 最大迭代次数
      */
     private Integer maxIterations;
+
+    /**
+     * 图片Base64编码（用于OCR）
+     */
+    private String imageBase64;
+
+    /**
+     * 图片文件名
+     */
+    private String imageName;
 }

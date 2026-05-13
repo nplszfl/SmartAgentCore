@@ -50,11 +50,42 @@ public interface Memory {
     void clear();
 
     /**
-     * 消息结构
+     * 消息内容项 - 支持文本和图片
      */
-    record Message(Role role, String content, String name) {
+    sealed interface ContentItem {
+        record Text(String text) implements ContentItem {}
+        record Image(String base64, String format) implements ContentItem {}
+    }
+
+    /**
+     * 消息结构 - 支持多模态内容
+     */
+    record Message(Role role, Object content, String name) {
+        // content 可以是 String（纯文本）或 List<ContentItem>（多模态）
         public Message(Role role, String content) {
-            this(role, content, null);
+            this(role, (Object) content, null);
+        }
+
+        public Message(Role role, String content, String name) {
+            this(role, (Object) content, name);
+        }
+
+        public Message(Role role, List<ContentItem> content) {
+            this(role, (Object) content, null);
+        }
+
+        public boolean hasImage() {
+            if (content instanceof List<?> list) {
+                return list.stream().anyMatch(i -> i instanceof ContentItem.Image);
+            }
+            return false;
+        }
+
+        public List<ContentItem> getContentItems() {
+            if (content instanceof List<?> list) {
+                return list.stream().map(i -> (ContentItem) i).toList();
+            }
+            return List.of(new ContentItem.Text((String) content));
         }
 
         public enum Role {

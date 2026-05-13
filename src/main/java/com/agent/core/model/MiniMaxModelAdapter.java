@@ -120,27 +120,41 @@ public class MiniMaxModelAdapter implements ChatModel {
         return model;
     }
 
-    private List<Map<String, String>> toMiniMaxMessages(List<Memory.Message> messages) {
-        List<Map<String, String>> result = new ArrayList<>();
+    private List<Object> toMiniMaxMessages(List<Memory.Message> messages) {
+        List<Object> result = new ArrayList<>();
         for (Memory.Message msg : messages) {
-            Map<String, String> m = new HashMap<>();
-            
-            // MiniMax使用不同的role名称
-            String role = switch (msg.role()) {
-                case SYSTEM -> "system";
-                case USER -> "user";
-                case ASSISTANT -> "assistant";
-                case TOOL -> "user"; // MiniMax可能不支持tool角色
-            };
-            
-            m.put("role", role);
-            m.put("content", msg.content());
-            if (msg.name() != null && msg.role() == Memory.Message.Role.TOOL) {
-                m.put("name", msg.name());
+            if (msg.hasImage()) {
+                // 多模态消息 - MiniMax直接接受data URI字符串
+                StringBuilder content = new StringBuilder();
+                for (Memory.ContentItem item : msg.getContentItems()) {
+                    if (item instanceof Memory.ContentItem.Text t) {
+                        content.append(t.text()).append("\n");
+                    } else if (item instanceof Memory.ContentItem.Image img) {
+                        content.append("data:image/").append(img.format()).append(";base64,").append(img.base64());
+                    }
+                }
+                Map<String, Object> m = new HashMap<>();
+                m.put("role", toMiniMaxRole(msg.role()));
+                m.put("content", content.toString().trim());
+                result.add(m);
+            } else {
+                // 纯文本消息
+                Map<String, Object> m = new HashMap<>();
+                m.put("role", toMiniMaxRole(msg.role()));
+                m.put("content", msg.content());
+                result.add(m);
             }
-            result.add(m);
         }
         return result;
+    }
+
+    private String toMiniMaxRole(Memory.Message.Role role) {
+        return switch (role) {
+            case SYSTEM -> "system";
+            case USER -> "user";
+            case ASSISTANT -> "assistant";
+            case TOOL -> "user";
+        };
     }
 
     private ModelResponse.ToolCall[] parseToolCalls(Map<String, Object> message) {

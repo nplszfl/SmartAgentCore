@@ -43,6 +43,10 @@ public class MiniMaxModelAdapter implements ChatModel {
     @Override
     public ModelResponse chat(List<Memory.Message> messages, Map<String, Object> parameters) {
         try {
+            // 检查是否有多模态消息
+            boolean hasImage = messages.stream().anyMatch(Memory.Message::hasImage);
+            String endpoint = hasImage ? "/v1/multi_modality/chatcompletion_v2" : "/v1/text/chatcompletion_v2";
+            
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", model);
             requestBody.put("messages", toMiniMaxMessages(messages));
@@ -60,8 +64,11 @@ public class MiniMaxModelAdapter implements ChatModel {
             String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper()
                 .writeValueAsString(requestBody);
 
+            log.info("[MiniMax] 请求 endpoint={}, model={}, hasImage={}", endpoint, model, hasImage);
+            log.debug("[MiniMax] 请求体: {}", jsonBody);
+
             HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(baseUrl + "/v1/text/chatcompletion_v2"))
+                .uri(URI.create(baseUrl + endpoint))
                 .header("Content-Type", "application/json")
                 .header("Authorization", "Bearer " + apiKey)
                 .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
@@ -70,7 +77,8 @@ public class MiniMaxModelAdapter implements ChatModel {
 
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             
-            log.debug("MiniMax API响应: {}", response.body());
+            log.info("[MiniMax] 响应状态: {}, body长度: {}", response.statusCode(), response.body().length());
+            log.debug("[MiniMax] API响应: {}", response.body());
             
             if (response.statusCode() != 200) {
                 log.error("MiniMax API错误: {} - {}", response.statusCode(), response.body());
@@ -124,12 +132,16 @@ public class MiniMaxModelAdapter implements ChatModel {
         List<Object> result = new ArrayList<>();
         for (Memory.Message msg : messages) {
             if (msg.hasImage()) {
-                // 多模态消息 - MiniMax直接接受data URI字符串
+                // 多模态消息 - MiniMax格式：描述\ndata:image/xxx;base64,xxx
                 StringBuilder content = new StringBuilder();
                 for (Memory.ContentItem item : msg.getContentItems()) {
                     if (item instanceof Memory.ContentItem.Text t) {
                         content.append(t.text()).append("\n");
                     } else if (item instanceof Memory.ContentItem.Image img) {
+                        // MiniMax多模态必须：文本描述 + base64
+                        if (content.length() == 0) {
+                            content.append("请描述这张图片的内容。\n");
+                        }
                         content.append("data:image/").append(img.format()).append(";base64,").append(img.base64());
                     }
                 }

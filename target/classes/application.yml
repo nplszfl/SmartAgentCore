@@ -1,0 +1,19 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: smartagent-core
+
+# Agent配置
+agent:
+  model:
+    deepseek:
+      api-key: ${DEEPSEEK_API_KEY:your-api-key-here}
+      model: deepseek-chat
+      base-url: https://api.deepseek.com
+
+# 日志配置
+logging:
+  level:
+    com.agent: DEBUG

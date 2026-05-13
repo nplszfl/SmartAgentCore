@@ -10,9 +10,11 @@
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/memory/Memory.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/model/ChatModel.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/model/DeepSeekModelAdapter.java
+/Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/model/MiniMaxModelAdapter.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/model/ModelResponse.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/tool/CalculatorTool.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/tool/DateTimeTool.java
+/Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/tool/OcrTool.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/tool/SearchTool.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/tool/Tool.java
 /Users/huanghuixiang/smartagent-core/src/main/java/com/agent/core/tool/ToolRegistry.java

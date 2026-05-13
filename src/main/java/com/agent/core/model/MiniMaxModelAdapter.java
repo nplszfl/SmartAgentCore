@@ -12,7 +12,7 @@ import java.util.*;
 
 /**
  * MiniMax模型适配器
- * 支持MiniMax Token Plan API
+ * 支持MiniMax M2.7多模态（通过text端点发送图片base64）
  */
 @Slf4j
 public class MiniMaxModelAdapter implements ChatModel {
@@ -43,28 +43,19 @@ public class MiniMaxModelAdapter implements ChatModel {
     @Override
     public ModelResponse chat(List<Memory.Message> messages, Map<String, Object> parameters) {
         try {
-            // 检查是否有多模态消息
-            boolean hasImage = messages.stream().anyMatch(Memory.Message::hasImage);
-            String endpoint = hasImage ? "/v1/multi_modality/chatcompletion_v2" : "/v1/text/chatcompletion_v2";
+            // MiniMax-M2.7 使用 /v1/text/chatcompletion_v2 端点（统一端点支持多模态）
+            String endpoint = "/v1/text/chatcompletion_v2";
             
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", model);
             requestBody.put("messages", toMiniMaxMessages(messages));
             requestBody.put("stream", false);
-            
-            // Token Plan特有参数
-            requestBody.put("tokens_to_generate", parameters.getOrDefault("max_tokens", 2048));
-            requestBody.put("temperature", parameters.getOrDefault("temperature", 0.7));
-            
-            // 是否启用工具调用
-            if (parameters.containsKey("tools")) {
-                requestBody.put("tools", parameters.get("tools"));
-            }
+            requestBody.put("max_tokens", parameters.getOrDefault("max_tokens", 4096));
 
             String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper()
                 .writeValueAsString(requestBody);
 
-            log.info("[MiniMax] 请求 endpoint={}, model={}, hasImage={}", endpoint, model, hasImage);
+            log.info("[MiniMax] 请求 endpoint={}, model={}", endpoint, model);
             log.debug("[MiniMax] 请求体: {}", jsonBody);
 
             HttpRequest request = HttpRequest.newBuilder()
@@ -91,28 +82,54 @@ public class MiniMaxModelAdapter implements ChatModel {
             Map<String, Object> respMap = new com.fasterxml.jackson.databind.ObjectMapper()
                 .readValue(response.body(), Map.class);
 
-            // 解析响应
+            // 检查base_resp错误
+            if (respMap.containsKey("base_resp")) {
+                Map<String, Object> baseResp = (Map<String, Object>) respMap.get("base_resp");
+                int statusCode = ((Number) baseResp.get("status_code")).intValue();
+                if (statusCode != 0) {
+                    String statusMsg = (String) baseResp.get("status_msg");
+                    log.error("MiniMax API错误: status_code={}, msg={}", statusCode, statusMsg);
+                    return ModelResponse.builder()
+                        .content("API Error: " + statusCode + " - " + statusMsg)
+                        .done(true)
+                        .build();
+                }
+            }
+
+            // 解析 choices 格式（MiniMax-M2.7使用choices返回）
+            String content = null;
+            ModelResponse.ToolCall[] toolCalls = null;
+            Map<String, Integer> usage = parseUsage(respMap);
+
             List<Map<String, Object>> choices = (List<Map<String, Object>>) respMap.get("choices");
             if (choices != null && !choices.isEmpty()) {
                 Map<String, Object> choice = choices.get(0);
                 Map<String, Object> message = (Map<String, Object>) choice.get("message");
-                String content = (String) message.get("content");
-                
-                // 解析工具调用
-                ModelResponse.ToolCall[] toolCalls = parseToolCalls(message);
-                
-                Map<String, Integer> usage = parseUsage(respMap);
-                
-                return ModelResponse.builder()
-                    .content(content)
-                    .done(true)
-                    .model(model)
-                    .toolCalls(toolCalls)
-                    .usage(usage)
-                    .build();
+                if (message != null) {
+                    // 优先取 reasoning_content（M2.7的思考过程），其次 content
+                    content = (String) message.get("reasoning_content");
+                    if (content == null || content.isEmpty()) {
+                        content = (String) message.get("content");
+                    }
+                    // 工具调用
+                    if (message.containsKey("tool_calls")) {
+                        toolCalls = parseToolCalls(message);
+                    }
+                }
             }
 
-            return ModelResponse.builder().content("No response").done(true).build();
+            if (content == null || content.isEmpty()) {
+                log.warn("[MiniMax] 响应content为空，可能max_tokens不足或模型未返回内容");
+                content = "（图片识别完成，描述内容为空）";
+            }
+
+            return ModelResponse.builder()
+                .content(content)
+                .done(true)
+                .model(model)
+                .toolCalls(toolCalls)
+                .usage(usage)
+                .build();
 
         } catch (Exception e) {
             log.error("调用MiniMax失败", e);
@@ -138,9 +155,9 @@ public class MiniMaxModelAdapter implements ChatModel {
                     if (item instanceof Memory.ContentItem.Text t) {
                         content.append(t.text()).append("\n");
                     } else if (item instanceof Memory.ContentItem.Image img) {
-                        // MiniMax多模态必须：文本描述 + base64
+                        // MiniMax多模态：文本描述 + base64
                         if (content.length() == 0) {
-                            content.append("请描述这张图片的内容。\n");
+                            content.append("请描述这张图片。\n");
                         }
                         content.append("data:image/").append(img.format()).append(";base64,").append(img.base64());
                     }
@@ -170,7 +187,6 @@ public class MiniMaxModelAdapter implements ChatModel {
     }
 
     private ModelResponse.ToolCall[] parseToolCalls(Map<String, Object> message) {
-        // MiniMax的工具调用解析逻辑
         if (message.containsKey("tool_calls")) {
             List<Map<String, Object>> toolCallsList = (List<Map<String, Object>>) message.get("tool_calls");
             if (toolCallsList != null) {

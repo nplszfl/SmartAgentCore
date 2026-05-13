@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8888
 
 spring:
   application:
@@ -8,8 +8,14 @@ spring:
 # Agent配置
 agent:
   model:
+    # MiniMax配置（优先使用）
+    minimax:
+      api-key: sk-cp-Us3_nmvtSJTBXRTtrKRgWBJBlk2aVGUx45BHoshtXyZtmSRRJJ65ZCIZW0HQ5b6ZWnHV6dbhXEjJH8vHLu46p36n_q9yPlaaM3pPVQ-v7YIFgwe89CK8PH8
+      model: MiniMax-M2.7
+      base-url: https://api.minimax.chat
+    # DeepSeek配置（备用）
     deepseek:
-      api-key: ${DEEPSEEK_API_KEY:your-api-key-here}
+      api-key: ""
       model: deepseek-chat
       base-url: https://api.deepseek.com
 

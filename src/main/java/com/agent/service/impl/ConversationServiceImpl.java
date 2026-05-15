@@ -23,7 +23,8 @@ public class ConversationServiceImpl implements ConversationService {
     @Override
     public ConversationEntity getOrCreateConversation(String userId, String agentName, String systemPrompt) {
         // 查询用户最近的会话
-        QueryWrapper wrapper = QueryWrapper.create().where("user_id = ?", userId)
+        QueryWrapper wrapper = QueryWrapper.create()
+                .eq("user_id", userId)
                 .orderBy("update_time", false)
                 .limit(1);
 
@@ -63,7 +64,8 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public List<ConversationEntity> getUserConversations(String userId) {
-        QueryWrapper wrapper = QueryWrapper.create().where("user_id = ?", userId)
+        QueryWrapper wrapper = QueryWrapper.create()
+                .eq("user_id", userId)
                 .orderBy("update_time", false);
 
         return conversationMapper.selectListByQuery(wrapper);

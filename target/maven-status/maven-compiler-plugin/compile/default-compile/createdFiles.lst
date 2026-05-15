@@ -6,10 +6,10 @@ com/agent/core/model/ModelResponse$ToolCall.class
 com/agent/core/memory/Memory$ContentItem.class
 com/agent/SmartAgentApplication.class
 com/agent/core/agent/Agent.class
+com/agent/entity/table/ConversationEntityTableDef.class
 com/agent/core/tool/OcrTool.class
 com/agent/core/memory/Memory$Message$Role.class
 com/agent/core/memory/Memory$Message.class
-com/agent/config/MyBatisPlusConfig.class
 com/agent/core/agent/ReActAgent$ReActAgentBuilder.class
 com/agent/core/executor/AgentExecutor$AgentResponse.class
 com/agent/core/model/ModelResponse$ModelResponseBuilder.class
@@ -19,7 +19,6 @@ com/agent/mapper/ConversationMapper.class
 com/agent/core/model/ModelResponse.class
 com/agent/api/AgentResponse.class
 com/agent/service/ConversationService.class
-com/agent/config/MyBatisPlusConfig$1.class
 com/agent/core/tool/ToolRegistry.class
 com/agent/core/memory/ConversationMemory.class
 com/agent/core/model/ModelResponse$ToolCall$ToolCallBuilder.class

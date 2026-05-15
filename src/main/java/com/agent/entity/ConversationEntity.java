@@ -1,6 +1,9 @@
 package com.agent.entity;
 
-import com.baomidou.mybatisplus.annotation.*;
+import com.mybatisflex.annotation.Id;
+import com.mybatisflex.annotation.KeyType;
+import com.mybatisflex.annotation.Table;
+import com.mybatisflex.annotation.Column;
 import lombok.Data;
 import java.time.LocalDateTime;
 
@@ -8,10 +11,10 @@ import java.time.LocalDateTime;
  * 对话会话实体
  */
 @Data
-@TableName("conversation")
+@Table("conversation")
 public class ConversationEntity {
 
-    @TableId(type = IdType.AUTO)
+    @Id(keyType = KeyType.Auto)
     private Long id;
 
     /**
@@ -37,12 +40,10 @@ public class ConversationEntity {
     /**
      * 创建时间
      */
-    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
     /**
      * 更新时间
      */
-    @TableField(fill = FieldFill.INSERT_UPDATE)
     private LocalDateTime updateTime;
 }

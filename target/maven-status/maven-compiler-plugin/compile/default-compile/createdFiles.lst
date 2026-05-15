@@ -35,6 +35,7 @@ com/agent/config/AgentConfig.class
 com/agent/api/AgentRequest.class
 com/agent/core/model/MiniMaxModelAdapter.class
 com/agent/core/model/MiniMaxModelAdapter$1.class
+com/agent/config/MyBatisFlexConfig.class
 com/agent/core/tool/SearchTool.class
 com/agent/core/executor/AgentExecutor.class
 com/agent/core/model/DeepSeekModelAdapter.class

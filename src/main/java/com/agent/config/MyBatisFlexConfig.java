@@ -1,12 +1,10 @@
 package com.agent.config;
 
-import org.apache.ibatis.session.SqlSessionFactory;
-import org.mybatis.spring.SqlSessionFactoryBean;
+import com.mybatisflex.spring.FlexSqlSessionFactoryBean;
 import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
 
 import javax.sql.DataSource;
 
@@ -18,15 +16,9 @@ public class MyBatisFlexConfig {
     private DataSource dataSource;
 
     @Bean
-    public SqlSessionFactory sqlSessionFactory() throws Exception {
-        SqlSessionFactoryBean sessionFactory = new SqlSessionFactoryBean();
+    public FlexSqlSessionFactoryBean sqlSessionFactory() throws Exception {
+        FlexSqlSessionFactoryBean sessionFactory = new FlexSqlSessionFactoryBean();
         sessionFactory.setDataSource(dataSource);
-        sessionFactory.setMapperLocations(
-            new PathMatchingResourcePatternResolver().getResources("classpath*:/mapper/**/*.xml")
-        );
-        org.apache.ibatis.session.Configuration configuration = new org.apache.ibatis.session.Configuration();
-        configuration.setMapUnderscoreToCamelCase(true);
-        sessionFactory.setConfiguration(configuration);
-        return sessionFactory.getObject();
+        return sessionFactory;
     }
 }

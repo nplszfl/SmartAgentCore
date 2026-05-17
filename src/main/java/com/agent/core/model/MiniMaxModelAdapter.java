@@ -9,10 +9,23 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.*;
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import javax.imageio.ImageIO;
 
 /**
  * MiniMax模型适配器
- * 支持MiniMax M2.7多模态（通过text端点发送图片base64）
+ * 
+ * 图片处理策略（参考OpenClaw）：
+ * 1. 图片先用 MiniMax-VL-01 通过 /v1/coding_plan/vlm 端点提取描述
+ * 2. 图片描述作为文本，发给 MiniMax-M2.7 进行对话
+ * 
+ * 支持的coding_plan模型：
+ * - MiniMax-VL-01: 视觉模型，支持图片理解
+ * - MiniMax-M2.5: 文本模型，支持超长上下文
+ * - MiniMax-M2.1: 文本模型
  */
 @Slf4j
 public class MiniMaxModelAdapter implements ChatModel {
@@ -21,6 +34,10 @@ public class MiniMaxModelAdapter implements ChatModel {
     private final String model;
     private final String baseUrl;
     private final HttpClient httpClient;
+    
+    // VL模型专用端点（参考OpenClaw）
+    // 实际用 https://api.minimax.io/anthropic 作为base
+    private static final String VL_BASE_URL = "https://api.minimax.io/anthropic";
 
     public MiniMaxModelAdapter(String apiKey) {
         this(apiKey, "abab6.5s-chat", "https://api.minimax.chat");
@@ -43,12 +60,15 @@ public class MiniMaxModelAdapter implements ChatModel {
     @Override
     public ModelResponse chat(List<Memory.Message> messages, Map<String, Object> parameters) {
         try {
-            // MiniMax-M2.7 使用 /v1/text/chatcompletion_v2 端点（统一端点支持多模态）
+            // 第一步：处理图片 - 用 VL-01 提取描述
+            List<Memory.Message> processedMessages = processImagesInMessages(messages);
+            
+            // 第二步：用 M2.7 进行对话
             String endpoint = "/v1/text/chatcompletion_v2";
             
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", model);
-            requestBody.put("messages", toMiniMaxMessages(messages));
+            requestBody.put("messages", toMiniMaxMessages(processedMessages));
             requestBody.put("stream", false);
             requestBody.put("max_tokens", parameters.getOrDefault("max_tokens", 4096));
 
@@ -120,7 +140,7 @@ public class MiniMaxModelAdapter implements ChatModel {
 
             if (content == null || content.isEmpty()) {
                 log.warn("[MiniMax] 响应content为空，可能max_tokens不足或模型未返回内容");
-                content = "（图片识别完成，描述内容为空）";
+                content = "（响应为空）";
             }
 
             return ModelResponse.builder()
@@ -145,34 +165,175 @@ public class MiniMaxModelAdapter implements ChatModel {
         return model;
     }
 
+    /**
+     * 处理消息中的图片：用 VL-01 提取描述，替换图片为文字描述
+     */
+    private List<Memory.Message> processImagesInMessages(List<Memory.Message> messages) {
+        List<Memory.Message> result = new ArrayList<>();
+        for (Memory.Message msg : messages) {
+            if (msg.hasImage()) {
+                // content是List<ContentItem>的情况
+                StringBuilder textContent = new StringBuilder();
+                for (Memory.ContentItem item : msg.getContentItems()) {
+                    if (item instanceof Memory.ContentItem.Text t) {
+                        if (textContent.length() > 0) textContent.append("\n");
+                        textContent.append(t.text());
+                    } else if (item instanceof Memory.ContentItem.Image img) {
+                        // 用 VL-01 提取图片描述
+                        String description = extractImageDescription(img.base64(), img.format());
+                        if (textContent.length() > 0) textContent.append("\n");
+                        textContent.append("[图片描述: ").append(description).append("]");
+                    }
+                }
+                result.add(new Memory.Message(msg.role(), textContent.toString()));
+            } else {
+                // 检查content字符串是否包含"[Image["文本，如果有就处理
+                Object rawContent = msg.content();
+                if (rawContent instanceof String content && content.contains("[Image[")) {
+                    // 替换[Image[base64=...]]为图片描述
+                    String processed = processImageText(content);
+                    result.add(new Memory.Message(msg.role(), processed));
+                } else {
+                    result.add(msg);
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 处理字符串中包含[Image[base64=...]]格式的图片文本
+     * 提取base64并用VL-01生成描述
+     */
+    private String processImageText(String text) {
+        StringBuilder result = new StringBuilder();
+        int i = 0;
+        while (i < text.length()) {
+            int imgStart = text.indexOf("[Image[", i);
+            if (imgStart == -1) {
+                result.append(text.substring(i));
+                break;
+            }
+            // 追加[Image[之前的文本
+            result.append(text, i, imgStart);
+            
+            // 找到base64=之后的内容
+            int base64Start = text.indexOf("base64=", imgStart);
+            if (base64Start == -1 || base64Start > imgStart + 100) {
+                // 格式不对，跳过这个标记
+                result.append("[Image[");
+                i = imgStart + 7;
+                continue;
+            }
+            
+            base64Start += 7; // 跳过"base64="
+            int imgEnd = text.indexOf("]]", base64Start);
+            if (imgEnd == -1) {
+                // 没有结束标记，尝试其他方式
+                result.append("[Image[");
+                i = imgStart + 7;
+                continue;
+            }
+            
+            String base64 = text.substring(base64Start, imgEnd);
+            // 找到format在base64=之前
+            int formatStart = text.lastIndexOf("[Image[format=", imgStart);
+            String format = "jpeg";
+            if (formatStart != -1 && formatStart > imgStart - 30) {
+                int fmtEnd = text.indexOf("]", formatStart);
+                if (fmtEnd > formatStart) {
+                    format = text.substring(formatStart + 14, fmtEnd);
+                }
+            }
+            
+            // 用VL-01提取描述
+            String description = extractImageDescription(base64, format);
+            result.append("[图片描述: ").append(description).append("]");
+            
+            i = imgEnd + 2; // 跳过]]
+        }
+        return result.toString();
+    }
+
+    /**
+     * 用 MiniMax-VL-01 提取图片描述（参考OpenClaw实现）
+     * 端点: POST /v1/coding_plan/vlm
+     * 基地址: https://api.minimax.io/anthropic
+     */
+    private String extractImageDescription(String base64, String format) {
+        try {
+            String compressedBase64 = compressImage(base64, format);
+            String imageDataUrl = "data:image/" + format + ";base64," + compressedBase64;
+            
+            // VL模型使用专用基地址（参考OpenClaw）
+            String url = VL_BASE_URL + "/v1/coding_plan/vlm";
+            
+            Map<String, Object> requestBody = new HashMap<>();
+            requestBody.put("prompt", "请描述这张图片，用简洁的语言说明图片内容。");
+            requestBody.put("image_url", imageDataUrl);
+
+            String jsonBody = new com.fasterxml.jackson.databind.ObjectMapper()
+                .writeValueAsString(requestBody);
+
+            log.info("[MiniMax-VL] 调用视觉模型提取图片描述, endpoint={}", url);
+            
+            HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("Content-Type", "application/json")
+                .header("Authorization", "Bearer " + apiKey)
+                .header("MM-API-Source", "OpenClaw")
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .timeout(Duration.ofSeconds(60))
+                .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            
+            log.info("[MiniMax-VL] 响应状态: {}, body: {}", response.statusCode(), response.body());
+
+            if (response.statusCode() != 200) {
+                log.error("MiniMax VL API错误: {} - {}", response.statusCode(), response.body());
+                return "（图片识别失败）";
+            }
+
+            Map<String, Object> respMap = new com.fasterxml.jackson.databind.ObjectMapper()
+                .readValue(response.body(), Map.class);
+
+            // 检查 base_resp 错误
+            if (respMap.containsKey("base_resp")) {
+                Map<String, Object> baseResp = (Map<String, Object>) respMap.get("base_resp");
+                int statusCode = ((Number) baseResp.get("status_code")).intValue();
+                if (statusCode != 0) {
+                    String statusMsg = (String) baseResp.get("status_msg");
+                    log.error("MiniMax VL API错误: status_code={}, msg={}", statusCode, statusMsg);
+                    return "（图片识别失败: " + statusMsg + "）";
+                }
+            }
+
+            // 解析 content 字段
+            Object contentObj = respMap.get("content");
+            if (contentObj != null) {
+                String content = contentObj.toString().trim();
+                if (!content.isEmpty()) {
+                    log.info("[MiniMax-VL] 图片描述: {}", content);
+                    return content;
+                }
+            }
+            
+            return "（图片描述为空）";
+            
+        } catch (Exception e) {
+            log.error("提取图片描述失败", e);
+            return "（图片识别失败: " + e.getMessage() + "）";
+        }
+    }
+
     private List<Object> toMiniMaxMessages(List<Memory.Message> messages) {
         List<Object> result = new ArrayList<>();
         for (Memory.Message msg : messages) {
-            if (msg.hasImage()) {
-                // 多模态消息 - MiniMax格式：描述\ndata:image/xxx;base64,xxx
-                StringBuilder content = new StringBuilder();
-                for (Memory.ContentItem item : msg.getContentItems()) {
-                    if (item instanceof Memory.ContentItem.Text t) {
-                        content.append(t.text()).append("\n");
-                    } else if (item instanceof Memory.ContentItem.Image img) {
-                        // MiniMax多模态：文本描述 + base64
-                        if (content.length() == 0) {
-                            content.append("请描述这张图片。\n");
-                        }
-                        content.append("data:image/").append(img.format()).append(";base64,").append(img.base64());
-                    }
-                }
-                Map<String, Object> m = new HashMap<>();
-                m.put("role", toMiniMaxRole(msg.role()));
-                m.put("content", content.toString().trim());
-                result.add(m);
-            } else {
-                // 纯文本消息
-                Map<String, Object> m = new HashMap<>();
-                m.put("role", toMiniMaxRole(msg.role()));
-                m.put("content", msg.content());
-                result.add(m);
-            }
+            Map<String, Object> m = new HashMap<>();
+            m.put("role", toMiniMaxRole(msg.role()));
+            m.put("content", msg.content());
+            result.add(m);
         }
         return result;
     }
@@ -231,5 +392,49 @@ public class MiniMaxModelAdapter implements ChatModel {
             }
         }
         return usage;
+    }
+
+    /**
+     * 压缩图片base64，限制最大边为512像素，使用JPEG 0.7质量
+     */
+    private String compressImage(String base64, String format) {
+        try {
+            byte[] imageBytes = Base64.getDecoder().decode(base64);
+            java.io.InputStream is = new java.io.ByteArrayInputStream(imageBytes);
+            BufferedImage originalImage = ImageIO.read(is);
+            is.close();
+
+            int maxSize = 512; // 限制最大边为512像素
+            int width = originalImage.getWidth();
+            int height = originalImage.getHeight();
+
+            if (width <= maxSize && height <= maxSize) {
+                return base64; // 不需要压缩
+            }
+
+            double ratio = Math.min((double) maxSize / width, (double) maxSize / height);
+            int newWidth = (int) (width * ratio);
+            int newHeight = (int) (height * ratio);
+
+            BufferedImage resizedImage = new BufferedImage(newWidth, newHeight, BufferedImage.TYPE_INT_RGB);
+            Graphics2D g = resizedImage.createGraphics();
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(originalImage, 0, 0, newWidth, newHeight, null);
+            g.dispose();
+
+            // 使用JPEG 0.7质量压缩
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            javax.imageio.ImageWriter writer = ImageIO.getImageWritersByFormatName("jpeg").next();
+            javax.imageio.ImageWriteParam param = writer.getDefaultWriteParam();
+            param.setCompressionMode(javax.imageio.ImageWriteParam.MODE_EXPLICIT);
+            param.setCompressionQuality(0.7f);
+            writer.setOutput(ImageIO.createImageOutputStream(baos));
+            writer.write(null, new javax.imageio.IIOImage(resizedImage, null, null), param);
+            writer.dispose();
+            return Base64.getEncoder().encodeToString(baos.toByteArray());
+        } catch (Exception e) {
+            log.warn("图片压缩失败，使用原图: {}", e.getMessage());
+            return base64;
+        }
     }
 }

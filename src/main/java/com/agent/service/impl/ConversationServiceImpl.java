@@ -3,10 +3,11 @@ package com.agent.service.impl;
 import com.agent.entity.ConversationEntity;
 import com.agent.mapper.ConversationMapper;
 import com.agent.service.ConversationService;
+import com.mybatisflex.core.query.QueryColumn;
 import com.mybatisflex.core.query.QueryWrapper;
+import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -21,22 +22,29 @@ import java.util.List;
 public class ConversationServiceImpl implements ConversationService {
 
     private final ConversationMapper conversationMapper;
-    private final JdbcTemplate jdbcTemplate;
+
+    // MyBatis-Flex 字段引用
+    private static final QueryColumn ID = new QueryColumn("id");
+    private static final QueryColumn USER_ID = new QueryColumn("user_id");
+    private static final QueryColumn UPDATE_TIME = new QueryColumn("update_time");
+    private static final QueryColumn MESSAGES = new QueryColumn("messages");
 
     @Override
     public ConversationEntity getOrCreateConversation(String userId, String agentName, String systemPrompt) {
-        // 查询用户最近的会话
+        // 查询用户最近的会话 - MyBatis-Flex eq() 直接传值，会自动处理字符串参数
         QueryWrapper wrapper = new QueryWrapper();
-        wrapper.where("user_id = '" + userId + "'");
-        wrapper.orderBy("update_time", false);
+        wrapper.where(USER_ID.eq(userId));
+        wrapper.orderBy(UPDATE_TIME, false);
         wrapper.limit(1);
 
         ConversationEntity existing = conversationMapper.selectOneByQuery(wrapper);
 
         if (existing != null) {
-            // 更新访问时间
-            jdbcTemplate.update("UPDATE conversation SET update_time = ? WHERE id = ?",
-                LocalDateTime.now(), existing.getId());
+            // 更新访问时间 - 使用 UpdateChain
+            UpdateChain.of(conversationMapper)
+                    .set(UPDATE_TIME, LocalDateTime.now())
+                    .where(ID.eq(existing.getId()))
+                    .update();
             existing.setUpdateTime(LocalDateTime.now());
             return existing;
         }
@@ -58,16 +66,20 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public void updateMessages(Long conversationId, String messagesJson) {
-        jdbcTemplate.update("UPDATE conversation SET messages = ?, update_time = ? WHERE id = ?",
-            messagesJson, LocalDateTime.now(), conversationId);
+        // 更新消息内容 - 使用 UpdateChain
+        UpdateChain.of(conversationMapper)
+                .set(MESSAGES, messagesJson)
+                .set(UPDATE_TIME, LocalDateTime.now())
+                .where(ID.eq(conversationId))
+                .update();
         log.debug("[Conversation] 更新消息 conversationId={}", conversationId);
     }
 
     @Override
     public List<ConversationEntity> getUserConversations(String userId) {
         QueryWrapper wrapper = new QueryWrapper();
-        wrapper.where("user_id = '" + userId + "'");
-        wrapper.orderBy("update_time", false);
+        wrapper.where(USER_ID.eq(userId));
+        wrapper.orderBy(UPDATE_TIME, false);
 
         return conversationMapper.selectListByQuery(wrapper);
     }

@@ -73,8 +73,10 @@ public class ReActAgent implements Agent {
         List<Memory.Message> messages = new ArrayList<>();
         messages.add(new Memory.Message(Memory.Message.Role.SYSTEM, reactPrompt));
         
-        // 添加历史记忆
-        for (Memory.Message msg : memory.getMessages()) {
+        // 添加历史记忆（限制最近20条，避免context window超限）
+        int historyLimit = 20;
+        List<Memory.Message> recentMsgs = memory.getRecentMessages(historyLimit);
+        for (Memory.Message msg : recentMsgs) {
             if (msg.role() != Memory.Message.Role.SYSTEM) {
                 messages.add(msg);
             }

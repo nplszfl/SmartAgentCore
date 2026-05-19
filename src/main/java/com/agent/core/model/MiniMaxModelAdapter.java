@@ -18,14 +18,8 @@ import javax.imageio.ImageIO;
 /**
  * MiniMax模型适配器
  * 
- * 图片处理策略（参考OpenClaw）：
- * 1. 图片先用 MiniMax-VL-01 通过 /v1/coding_plan/vlm 端点提取描述
- * 2. 图片描述作为文本，发给 MiniMax-M2.7 进行对话
- * 
- * 支持的coding_plan模型：
- * - MiniMax-VL-01: 视觉模型，支持图片理解
- * - MiniMax-M2.5: 文本模型，支持超长上下文
- * - MiniMax-M2.1: 文本模型
+ * MiniMax-M2.7 原生支持多模态输入，图片直接通过 base64 格式发送
+ * 无需先调用 VL 模型提取描述
  */
 @Slf4j
 public class MiniMaxModelAdapter implements ChatModel {
@@ -60,15 +54,12 @@ public class MiniMaxModelAdapter implements ChatModel {
     @Override
     public ModelResponse chat(List<Memory.Message> messages, Map<String, Object> parameters) {
         try {
-            // 第一步：处理图片 - 用 VL-01 提取描述
-            List<Memory.Message> processedMessages = processImagesInMessages(messages);
-            
-            // 第二步：用 M2.7 进行对话
+            // MiniMax-M2.7 原生支持多模态，直接发送图片
             String endpoint = "/v1/text/chatcompletion_v2";
             
             Map<String, Object> requestBody = new HashMap<>();
             requestBody.put("model", model);
-            requestBody.put("messages", toMiniMaxMessages(processedMessages));
+            requestBody.put("messages", toMiniMaxMessagesWithImages(messages));
             requestBody.put("stream", false);
             requestBody.put("max_tokens", parameters.getOrDefault("max_tokens", 4096));
 
@@ -334,6 +325,43 @@ public class MiniMaxModelAdapter implements ChatModel {
             m.put("role", toMiniMaxRole(msg.role()));
             m.put("content", msg.content());
             result.add(m);
+        }
+        return result;
+    }
+
+    /**
+     * MiniMax-M2.7 原生多模态消息格式
+     * 图片直接作为 content 数组中的对象发送，不需要先提取描述
+     */
+    private List<Object> toMiniMaxMessagesWithImages(List<Memory.Message> messages) {
+        List<Object> result = new ArrayList<>();
+        for (Memory.Message msg : messages) {
+            if (msg.hasImage()) {
+                // 多模态格式：content 是数组，包含 text 和 image 对象
+                List<Object> contentList = new ArrayList<>();
+                for (Memory.ContentItem item : msg.getContentItems()) {
+                    if (item instanceof Memory.ContentItem.Text t) {
+                        contentList.add(Map.of("type", "text", "text", t.text()));
+                    } else if (item instanceof Memory.ContentItem.Image img) {
+                        // 压缩图片以减少 token 消耗
+                        String compressedBase64 = compressImage(img.base64(), img.format());
+                        contentList.add(Map.of(
+                            "type", "image_url",
+                            "image_url", Map.of("url", "data:image/" + img.format() + ";base64," + compressedBase64)
+                        ));
+                    }
+                }
+                result.add(Map.of(
+                    "role", toMiniMaxRole(msg.role()),
+                    "content", contentList
+                ));
+            } else {
+                // 纯文本消息
+                Map<String, Object> m = new HashMap<>();
+                m.put("role", toMiniMaxRole(msg.role()));
+                m.put("content", msg.content());
+                result.add(m);
+            }
         }
         return result;
     }

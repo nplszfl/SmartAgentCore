@@ -25,11 +25,6 @@ agent:
       api-key: sk-cp-Us3_nmvtSJTBXRTtrKRgWBJBlk2aVGUx45BHoshtXyZtmSRRJJ65ZCIZW0HQ5b6ZWnHV6dbhXEjJH8vHLu46p36n_q9yPlaaM3pPVQ-v7YIFgwe89CK8PH8
       model: MiniMax-M2.7
       base-url: https://api.minimax.chat
-    # DeepSeek配置（备用）
-    deepseek:
-      api-key: ""
-      model: deepseek-chat
-      base-url: https://api.deepseek.com
 
 # 日志配置
 logging:

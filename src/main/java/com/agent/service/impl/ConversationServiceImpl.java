@@ -8,6 +8,7 @@ import com.mybatisflex.core.query.QueryWrapper;
 import com.mybatisflex.core.update.UpdateChain;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -82,5 +83,41 @@ public class ConversationServiceImpl implements ConversationService {
         wrapper.orderBy(UPDATE_TIME, false);
 
         return conversationMapper.selectListByQuery(wrapper);
+    }
+
+    @Override
+    public ConversationEntity getConversation(Long id) {
+        QueryWrapper wrapper = new QueryWrapper();
+        wrapper.where(ID.eq(id));
+        return conversationMapper.selectOneByQuery(wrapper);
+    }
+
+    @Override
+    public void deleteConversation(Long id) {
+        conversationMapper.deleteById(id);
+        log.info("[Conversation] 删除会话 id={}", id);
+    }
+
+    @Override
+    public void clearUserConversations(String userId) {
+        QueryWrapper wrapper = new QueryWrapper();
+        wrapper.where(USER_ID.eq(userId));
+        conversationMapper.deleteByQuery(wrapper);
+        log.info("[Conversation] 清空用户所有会话 userId={}", userId);
+    }
+
+    /**
+     * 定期清理7天未活跃的会话，防止数据积累
+     * 每天凌晨3点执行
+     */
+    @Scheduled(cron = "0 0 3 * * ?")
+    public void cleanupStaleConversations() {
+        LocalDateTime threshold = LocalDateTime.now().minusDays(7);
+        QueryWrapper wrapper = new QueryWrapper();
+        wrapper.where(UPDATE_TIME.lt(threshold));
+        int deleted = conversationMapper.deleteByQuery(wrapper);
+        if (deleted > 0) {
+            log.info("[Conversation] 清理过期会话 {} 条", deleted);
+        }
     }
 }

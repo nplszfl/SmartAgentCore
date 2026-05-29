@@ -21,4 +21,19 @@ public interface ConversationService {
      * 获取用户会话列表
      */
     java.util.List<ConversationEntity> getUserConversations(String userId);
+
+    /**
+     * 根据ID获取会话详情
+     */
+    ConversationEntity getConversation(Long id);
+
+    /**
+     * 删除指定会话
+     */
+    void deleteConversation(Long id);
+
+    /**
+     * 清空用户所有会话
+     */
+    void clearUserConversations(String userId);
 }

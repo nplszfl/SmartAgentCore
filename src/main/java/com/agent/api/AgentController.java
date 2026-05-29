@@ -8,6 +8,10 @@ import com.agent.entity.ConversationEntity;
 import com.agent.service.ConversationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Max;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -42,7 +46,7 @@ public class AgentController {
      * Chat with Agent
      */
     @PostMapping("/chat")
-    public AgentResponse chat(@RequestBody AgentRequest request) {
+    public AgentResponse chat(@Valid @RequestBody AgentRequest request) {
         try {
             String userId = getUserId(request);
             String input = request.getInput();
@@ -98,8 +102,38 @@ public class AgentController {
      */
     @GetMapping("/conversation/{id}")
     public AgentResponse getConversation(@PathVariable Long id) {
-        // 这里可以添加获取详情的方法
-        return AgentResponse.success("会话ID: " + id);
+        ConversationEntity conv = conversationService.getConversation(id);
+        if (conv == null) {
+            return AgentResponse.error("会话不存在");
+        }
+        try {
+            return AgentResponse.success(objectMapper.writeValueAsString(conv));
+        } catch (Exception e) {
+            log.error("序列化会话失败", e);
+            return AgentResponse.error("会话不存在");
+        }
+    }
+
+    /**
+     * 删除单个会话
+     */
+    @DeleteMapping("/conversation/{id}")
+    public AgentResponse deleteConversation(@PathVariable Long id) {
+        ConversationEntity conv = conversationService.getConversation(id);
+        if (conv == null) {
+            return AgentResponse.error("会话不存在");
+        }
+        conversationService.deleteConversation(id);
+        return AgentResponse.success("会话已删除");
+    }
+
+    /**
+     * 清空用户所有会话
+     */
+    @DeleteMapping("/conversations")
+    public AgentResponse clearConversations(@RequestParam String userId) {
+        conversationService.clearUserConversations(userId);
+        return AgentResponse.success("用户会话已清空");
     }
 
     /**

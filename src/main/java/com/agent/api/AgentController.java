@@ -4,7 +4,10 @@ import com.agent.core.memory.Memory;
 import com.agent.core.model.ChatModel;
 import com.agent.core.model.ModelResponse;
 import com.agent.core.tool.*;
+import com.agent.entity.AgentMetricsRecord;
 import com.agent.entity.ConversationEntity;
+import com.agent.service.AgentMetricsService;
+import com.agent.service.AgentTemplateService;
 import com.agent.service.ConversationService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
@@ -12,9 +15,12 @@ import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Agent REST API Controller
@@ -28,6 +34,12 @@ public class AgentController {
     private final ToolRegistry toolRegistry;
     private final ConversationService conversationService;
     private final ObjectMapper objectMapper;
+
+    @Autowired(required = false)
+    private AgentMetricsService metricsService;
+
+    @Autowired(required = false)
+    private AgentTemplateService templateService;
 
     public AgentController(ChatModel chatModel, ConversationService conversationService) {
         this.chatModel = chatModel;
@@ -47,17 +59,40 @@ public class AgentController {
      */
     @PostMapping("/chat")
     public AgentResponse chat(@Valid @RequestBody AgentRequest request) {
+        long startMs = System.currentTimeMillis();
+        String userId = getUserId(request);
+        String input = request.getInput();
+        String agentType = request.getAgentType() != null ? request.getAgentType() : "react";
+        String agentName = request.getAgentName() != null ? request.getAgentName() : "assistant";
+        boolean success = false;
+        boolean timeout = false;
+        int iterations = 0;
+        int inTokens = 0;
+        int outTokens = 0;
+        Set<String> toolsUsed = new LinkedHashSet<>();
+        String errorMessage = null;
+
         try {
-            String userId = getUserId(request);
-            String input = request.getInput();
             int maxIterations = request.getMaxIterations() != null ? request.getMaxIterations() : 10;
+            if (maxIterations <= 0) maxIterations = 10;
+
+            // 解析系统提示：优先用模板
+            String systemPrompt = request.getSystemPrompt();
+            if (systemPrompt == null && templateService != null) {
+                Optional<com.agent.entity.AgentTemplate> tmpl = templateService.getById(agentName);
+                if (tmpl.isPresent()) {
+                    systemPrompt = tmpl.get().getSystemPrompt();
+                    templateService.recordUsage(agentName);
+                }
+            }
+            if (systemPrompt == null) systemPrompt = buildDefaultSystemPrompt();
+
+            // 限定工具列表
+            List<Tool> activeTools = selectTools(request.getTools());
 
             // 获取或创建会话
             ConversationEntity conversation = conversationService.getOrCreateConversation(
-                userId,
-                request.getAgentName() != null ? request.getAgentName() : "assistant",
-                request.getSystemPrompt() != null ? request.getSystemPrompt() : buildDefaultSystemPrompt()
-            );
+                userId, agentName, systemPrompt);
 
             // 从数据库加载消息历史
             List<Memory.Message> messages = loadMessages(conversation);
@@ -77,15 +112,70 @@ public class AgentController {
             }
 
             // 执行 ReAct 循环
-            String finalAnswer = executeReActLoop(messages, maxIterations);
+            ChatLoopResult result = executeReActLoop(messages, activeTools, maxIterations);
+            iterations = result.iterations;
+            toolsUsed.addAll(result.toolsUsed);
+            if (result.timedOut) timeout = true;
 
             // 更新数据库中的消息历史
             saveMessages(conversation.getId(), messages);
 
-            return AgentResponse.success(finalAnswer);
+            success = true;
+            return AgentResponse.success(result.answer);
         } catch (Exception e) {
             log.error("Chat处理失败", e);
-            return AgentResponse.error(e.getMessage());
+            errorMessage = e.getMessage();
+            return AgentResponse.error(errorMessage);
+        } finally {
+            recordMetrics(userId, agentName, agentType, input, success, timeout, errorMessage,
+                System.currentTimeMillis() - startMs, iterations, inTokens, outTokens, toolsUsed);
+        }
+    }
+
+    /**
+     * 根据 tools 字段限定可用工具
+     */
+    private List<Tool> selectTools(List<String> tools) {
+        if (tools == null || tools.isEmpty()) {
+            return toolRegistry.getAll();
+        }
+        List<Tool> selected = new ArrayList<>();
+        for (String name : tools) {
+            Tool t = toolRegistry.get(name);
+            if (t != null) selected.add(t);
+        }
+        return selected.isEmpty() ? toolRegistry.getAll() : selected;
+    }
+
+    /**
+     * 记录调用指标
+     */
+    private void recordMetrics(String userId, String agentName, String agentType, String input,
+                                boolean success, boolean timeout, String error,
+                                long durationMs, int iterations, int inTokens, int outTokens,
+                                Set<String> toolsUsed) {
+        if (metricsService == null) return;
+        try {
+            AgentMetricsRecord record = AgentMetricsRecord.builder()
+                .userId(userId)
+                .agentName(agentName)
+                .agentType(agentType)
+                .input(input != null && input.length() > 500 ? input.substring(0, 500) : input)
+                .success(success)
+                .timeout(timeout)
+                .error(error)
+                .durationMs(durationMs)
+                .iterations(iterations)
+                .inputTokens(inTokens)
+                .outputTokens(outTokens)
+                .totalTokens(inTokens + outTokens)
+                .toolsUsed(toolsUsed.stream().collect(Collectors.joining(",")))
+                .modelName(chatModel != null ? chatModel.getModelName() : "unknown")
+                .createdAt(LocalDateTime.now())
+                .build();
+            metricsService.record(record);
+        } catch (Exception e) {
+            log.warn("记录指标失败: {}", e.getMessage());
         }
     }
 
@@ -222,15 +312,19 @@ public class AgentController {
         }
     }
 
-    private String executeReActLoop(List<Memory.Message> messages, int maxIterations) {
+    private ChatLoopResult executeReActLoop(List<Memory.Message> messages, List<Tool> activeTools, int maxIterations) {
         String finalAnswer = null;
+        boolean timedOut = false;
+        int iterations = 0;
+        Set<String> toolsUsed = new LinkedHashSet<>();
 
         for (int step = 0; step < maxIterations; step++) {
+            iterations = step + 1;
             ModelResponse response = chatModel.chat(messages);
             String content = response.getContent();
 
             if (content == null || content.isEmpty()) {
-                return "模型返回为空";
+                return new ChatLoopResult("模型返回为空", false, iterations, toolsUsed);
             }
 
             if (response.isDone()) {
@@ -245,9 +339,10 @@ public class AgentController {
                 break;
             }
 
-            // 执行工具调用
+            // 执行工具调用（仅限激活的工具）
             for (ModelResponse.ToolCall tc : toolCalls) {
-                Tool tool = toolRegistry.get(tc.getName());
+                Tool tool = findTool(activeTools, tc.getName());
+                toolsUsed.add(tc.getName());
                 String toolResult;
                 if (tool != null) {
                     Tool.ToolResult result = tool.execute(tc.getArguments());
@@ -255,7 +350,7 @@ public class AgentController {
                         tc.getName(),
                         result.success() ? result.output() : "Error: " + result.error());
                 } else {
-                    toolResult = "[TOOL: " + tc.getName() + "] Tool not found";
+                    toolResult = "[TOOL: " + tc.getName() + "] Tool not available";
                 }
                 messages.add(new Memory.Message(Memory.Message.Role.ASSISTANT, content));
                 messages.add(new Memory.Message(Memory.Message.Role.TOOL, toolResult, tc.getName()));
@@ -264,10 +359,21 @@ public class AgentController {
 
         if (finalAnswer == null) {
             finalAnswer = "达到最大迭代次数限制";
+            timedOut = true;
         }
 
-        return finalAnswer;
+        return new ChatLoopResult(finalAnswer, timedOut, iterations, toolsUsed);
     }
+
+    private Tool findTool(List<Tool> tools, String name) {
+        for (Tool t : tools) {
+            if (t.getName().equals(name)) return t;
+        }
+        return null;
+    }
+
+    /** ReAct 循环执行结果 */
+    private record ChatLoopResult(String answer, boolean timedOut, int iterations, Set<String> toolsUsed) {}
 
     private String buildDefaultSystemPrompt() {
         return """

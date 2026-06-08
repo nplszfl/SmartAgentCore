@@ -18,7 +18,7 @@ import javax.imageio.ImageIO;
 /**
  * MiniMax模型适配器
  * 
- * MiniMax-M2.7 原生支持多模态输入，图片直接通过 base64 格式发送
+ * MiniMax-M3 原生支持多模态输入，图片直接通过 base64 格式发送
  * 无需先调用 VL 模型提取描述
  */
 @Slf4j
@@ -54,7 +54,7 @@ public class MiniMaxModelAdapter implements ChatModel {
     @Override
     public ModelResponse chat(List<Memory.Message> messages, Map<String, Object> parameters) {
         try {
-            // MiniMax-M2.7 原生支持多模态，直接发送图片
+            // MiniMax-M3 原生支持多模态，直接发送图片
             String endpoint = "/v1/text/chatcompletion_v2";
             
             Map<String, Object> requestBody = new HashMap<>();
@@ -107,7 +107,7 @@ public class MiniMaxModelAdapter implements ChatModel {
                 }
             }
 
-            // 解析 choices 格式（MiniMax-M2.7使用choices返回）
+            // 解析 choices 格式（MiniMax-M3使用choices返回）
             String content = null;
             ModelResponse.ToolCall[] toolCalls = null;
             Map<String, Integer> usage = parseUsage(respMap);
@@ -117,7 +117,7 @@ public class MiniMaxModelAdapter implements ChatModel {
                 Map<String, Object> choice = choices.get(0);
                 Map<String, Object> message = (Map<String, Object>) choice.get("message");
                 if (message != null) {
-                    // 优先取 reasoning_content（M2.7的思考过程），其次 content
+                    // 优先取 reasoning_content（M3的思考过程），其次 content
                     content = (String) message.get("reasoning_content");
                     if (content == null || content.isEmpty()) {
                         content = (String) message.get("content");
@@ -330,7 +330,7 @@ public class MiniMaxModelAdapter implements ChatModel {
     }
 
     /**
-     * MiniMax-M2.7 原生多模态消息格式
+     * MiniMax-M3 原生多模态消息格式
      * 图片直接作为 content 数组中的对象发送，不需要先提取描述
      */
     private List<Object> toMiniMaxMessagesWithImages(List<Memory.Message> messages) {
